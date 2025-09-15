@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <title>Tô màu đồ thị — So sánh thuật toán</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+            margin: 20px;
+        }
+
+        canvas {
+            border: 1px solid #333;
+            margin-top: 10px;
+        }
+
+        button, select, input {
+            margin: 5px;
+            padding: 5px 10px;
+        }
+
+        table {
+            border-collapse: collapse;
+            margin: 15px auto;
+        }
+
+        th, td {
+            border: 1px solid #666;
+            padding: 5px 10px;
+        }
+
+        #stepDesc {
+            margin-top: 10px;
+            font-style: italic;
+            color: darkblue;
+            min-height: 20px;
+        }
+    </style>
+</head>
+<body>
+    <h2>Tô màu đồ thị — So sánh thuật toán</h2>
+
+    <label for="numVertices">Số đỉnh:</label>
+    <input type="number" id="numVertices" value="6" min="3" max="20">
+    <button onclick="generateGraph()">Sinh đồ thị</button>
+    <br>
+
+    <label for="algorithm">Chọn thuật toán:</label>
+    <select id="algorithm">
+        <option value="greedy">Greedy</option>
+        <option value="backtrack">Backtracking</option>
+        <option value="dsatur">DSATUR</option>
+    </select>
+    <br>
+
+    <button onclick="startAlgorithm()">Bắt đầu</button>
+    <button onclick="nextStep()">Bước tiếp</button>
+    <button onclick="resetColoring()">Reset tô màu</button>
+    <button onclick="resetAll()">Reset tất cả</button>
+
+    <div id="stepDesc"></div>
+    <canvas id="graphCanvas" width="600" height="500"></canvas>
+
+    <h3>Kết quả chi tiết</h3>
+    <table id="resultTable">
+        <thead><tr><th>Đỉnh</th><th>Màu</th></tr></thead>
+        <tbody></tbody>
+    </table>
+
+    <h3>Bảng so sánh thuật toán</h3>
+    <table id="compareTable">
+        <thead><tr><th>Thuật toán</th><th>Số màu</th><th>Thời gian (ms)</th><th>Kết quả</th></tr></thead>
+        <tbody></tbody>
+    </table>
+
+    <script>
+        const canvas = document.getElementById("graphCanvas");
+        const ctx = canvas.getContext("2d");
+
+        const COLOR_NAMES = ["Đỏ", "Xanh lá", "Xanh dương", "Vàng", "Cam", "Tím", "Hồng", "Nâu", "Xám", "Đen"];
+        const COLOR_PALETTE = ["#ff6666", "#66cc66", "#6699ff", "#ffcc00", "#ff9966", "#cc66ff", "#ff66b2", "#996633", "#999999", "#000000"];
+
+        let vertices = [];
+        let edges = [];
+        let colors = {};
+        let stepIndex = 0;
+        let order = [];
+        let currentAlgo = "";
+        let finished = false;
+        let compareResults = [];
+        let startTime = 0;
+
+        // Backtracking state
+        let btStack = [];
+
+        // --- Vẽ đồ thị ---
+        function drawGraph() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.lineWidth = 2;
+            edges.forEach(([u, v]) => {
+                ctx.beginPath();
+                ctx.moveTo(vertices[u].x, vertices[u].y);
+                ctx.lineTo(vertices[v].x, vertices[v].y);
+                ctx.stroke();
+            });
+            vertices.forEach((v, i) => {
+                ctx.beginPath();
+                ctx.arc(v.x, v.y, 20, 0, 2 * Math.PI);
+                ctx.fillStyle = colors[i] ? COLOR_PALETTE[colors[i] - 1] : "white";
+                ctx.fill();
+                ctx.stroke();
+                ctx.fillStyle = "black";
+                ctx.textAlign = "center"; ctx.textBaseline = "middle";
+                ctx.fillText(i, v.x, v.y);
+            });
+        }
+
+        // --- Sinh đồ thị ngẫu nhiên ---
+        function generateGraph() {
+            let n = parseInt(document.getElementById("numVertices").value);
+            vertices = [];
+            edges = [];
+            colors = {};
+            stepIndex = 0;
+            finished = false;
+
+            // Tạo vị trí trên vòng tròn
+            let R = 180, cx = canvas.width / 2, cy = canvas.height / 2;
+            for (let i = 0; i < n; i++) {
+                let angle = 2 * Math.PI * i / n;
+                vertices.push({ x: cx + R * Math.cos(angle), y: cy + R * Math.sin(angle) });
+            }
+            // Sinh cạnh ngẫu nhiên (xác suất 0.3)
+            for (let i = 0; i < n; i++) {
+                for (let j = i + 1; j < n; j++) {
+                    if (Math.random() < 0.3) edges.push([i, j]);
+                }
+            }
+            document.querySelector("#resultTable tbody").innerHTML = "";
+            document.getElementById("stepDesc").innerText = "Đã sinh đồ thị ngẫu nhiên.";
+            drawGraph();
+        }
+
+        // --- Reset ---
+        function resetColoring() {
+            colors = {};
+            stepIndex = 0;
+            finished = false;
+            btStack = [];
+            document.querySelector("#resultTable tbody").innerHTML = "";
+            document.getElementById("stepDesc").innerText = "";
+            drawGraph();
+        }
+        function resetAll() {
+            resetColoring();
+            compareResults = [];
+            document.querySelector("#compareTable tbody").innerHTML = "";
+        }
+
+        // --- Khởi động thuật toán ---
+        function startAlgorithm() {
+            resetColoring();
+            currentAlgo = document.getElementById("algorithm").value;
+            if (currentAlgo === "greedy") {
+                order = vertices.map((_, i) => i);
+            } else if (currentAlgo === "backtrack") {
+                btStack = [{ vertex: 0, color: 1 }]; // bắt đầu
+            } else if (currentAlgo === "dsatur") {
+                order = [];
+            }
+            document.getElementById("stepDesc").innerText =
+                "Đã chọn " + currentAlgo.toUpperCase() + ". Bấm 'Bước tiếp' để chạy.";
+            startTime = performance.now();
+            drawGraph();
+        }
+
+        // --- Greedy & DSATUR ---
+        function degree(v) {
+            return edges.filter(e => e[0] === v || e[1] === v).length;
+        }
+        function satDeg(v) {
+            let neighColors = new Set();
+            edges.forEach(([u, w]) => {
+                if (u === v && colors[w]) neighColors.add(colors[w]);
+                if (w === v && colors[u]) neighColors.add(colors[u]);
+            });
+            return neighColors.size;
+        }
+
+        // --- Hàm kiểm tra màu hợp lệ cho backtracking ---
+        function isValidColor(v, c) {
+            for (let [u, w] of edges) {
+                if ((u === v && colors[w] === c) || (w === v && colors[u] === c)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        // --- 1 bước ---
+        function nextStep() {
+            if (finished) return;
+
+            if (currentAlgo === "backtrack") {
+                if (btStack.length === 0) {
+                    document.getElementById("stepDesc").innerText = "Không tìm thấy nghiệm.";
+                    finished = true;
+                    return;
+                }
+
+                let state = btStack.pop();
+                let v = state.vertex;
+                let c = state.color;
+
+                if (c > COLOR_NAMES.length) {
+                    // Thử hết màu -> backtrack
+                    delete colors[v];
+                    document.getElementById("stepDesc").innerText =
+                        `Backtrack: đỉnh ${v} thử hết màu, quay lui.`;
+                    if (v > 0) btStack.push({ vertex: v - 1, color: colors[v - 1] + 1 });
+                    updateResultTable();
+                    drawGraph();
+                    return;
+                }
+
+                if (isValidColor(v, c)) {
+                    colors[v] = c;
+                    document.getElementById("stepDesc").innerText =
+                        `Thử gán: đỉnh ${v} = ${COLOR_NAMES[c - 1]} ✔️`;
+                    if (v === vertices.length - 1) {
+                        finished = true;
+                        document.getElementById("stepDesc").innerText += " — Hoàn thành!";
+                        finishAlgorithm();
+                    } else {
+                        btStack.push({ vertex: v, color: c + 1 }); // nếu sau này fail thì thử tiếp màu khác
+                        btStack.push({ vertex: v + 1, color: 1 }); // sang đỉnh tiếp
+                    }
+                } else {
+                    btStack.push({ vertex: v, color: c + 1 });
+                    document.getElementById("stepDesc").innerText =
+                        `Thử gán: đỉnh ${v} = ${COLOR_NAMES[c - 1]} ❌ (không hợp lệ)`;
+                }
+
+                updateResultTable();
+                drawGraph();
+                return;
+            }
+
+            // --- Greedy & DSATUR ---
+            let v;
+            if (currentAlgo === "dsatur") {
+                let candidates = vertices.map((_, i) => i).filter(i => !(i in colors));
+                if (candidates.length === 0) { finishAlgorithm(); return; }
+                candidates.sort((a, b) => {
+                    let sa = satDeg(a), sb = satDeg(b);
+                    if (sa !== sb) return sb - sa;
+                    return degree(b) - degree(a);
+                });
+                v = candidates[0];
+            } else if (currentAlgo === "greedy") {
+                if (stepIndex >= vertices.length) { finishAlgorithm(); return; }
+                v = order[stepIndex];
+            }
+
+            let used = new Set();
+            edges.forEach(([u, w]) => {
+                if (u === v && colors[w]) used.add(colors[w]);
+                if (w === v && colors[u]) used.add(colors[u]);
+            });
+            let c = 1; while (used.has(c)) c++;
+            colors[v] = c;
+            stepIndex++;
+
+            updateResultTable();
+            drawGraph();
+            document.getElementById("stepDesc").innerText =
+                `Tô đỉnh ${v} bằng màu ${COLOR_NAMES[c - 1]}.`;
+
+            if (Object.keys(colors).length === vertices.length) {
+                finishAlgorithm();
+            }
+        }
+
+        // --- Update kết quả ---
+        function updateResultTable() {
+            let tbody = document.querySelector("#resultTable tbody");
+            tbody.innerHTML = "";
+            for (let i = 0; i < vertices.length; i++) {
+                let c = colors[i] ? COLOR_NAMES[colors[i] - 1] : "";
+                let row = `<tr><td>${i}</td><td>${c}</td></tr>`;
+                tbody.innerHTML += row;
+            }
+        }
+
+        // --- Kết thúc ---
+        function finishAlgorithm() {
+            finished = true;
+            let endTime = performance.now();
+            let elapsed = (endTime - startTime).toFixed(2);
+            let numColors = Math.max(...Object.values(colors));
+            let resultStr = Object.entries(colors).map(([v, c]) => `${v}:${COLOR_NAMES[c - 1]}`).join(", ");
+            compareResults.push({ algo: currentAlgo, numColors, elapsed, resultStr });
+            updateCompareTable();
+        }
+
+        // --- Bảng so sánh ---
+        function updateCompareTable() {
+            let tbody = document.querySelector("#compareTable tbody");
+            tbody.innerHTML = "";
+            compareResults.forEach(r => {
+                let row = `<tr><td>${r.algo}</td><td>${r.numColors}</td><td>${r.elapsed}</td><td>${r.resultStr}</td></tr>`;
+                tbody.innerHTML += row;
+            });
+        }
+
+        generateGraph(); // sinh mặc định ban đầu
+    </script>
+</body>
+</html>
